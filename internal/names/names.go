@@ -2,10 +2,11 @@
 package names
 
 import (
+	"strconv"
 	"strings"
 	"unicode"
 
-	"github.com/openai/slopgen/internal/rng"
+	"github.com/brainfucknow/slopgen/internal/rng"
 )
 
 var corpus = []string{"value", "index", "count", "result", "current", "source", "target", "node", "item", "total", "limit", "state", "buffer", "offset"}
@@ -48,21 +49,7 @@ func (g *Generator) Name(r *rng.Stream, exported bool, suffix int) string {
 		name = string(rs)
 	}
 	if suffix >= 0 {
-		name += decimal(suffix)
+		name += strconv.Itoa(suffix)
 	}
 	return name
-}
-
-func decimal(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var a [20]byte
-	i := len(a)
-	for n > 0 {
-		i--
-		a[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(a[i:])
 }

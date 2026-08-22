@@ -6,13 +6,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/openai/slopgen/internal/check"
-	"github.com/openai/slopgen/internal/gen"
+	"github.com/brainfucknow/slopgen/internal/check"
+	"github.com/brainfucknow/slopgen/internal/gen"
+	"github.com/brainfucknow/slopgen/internal/rng"
 )
 
 type result struct {
@@ -57,10 +57,13 @@ func main() {
 		go func() {
 			defer wg.Done()
 			for i := range jobs {
-				src := gen.Generate(seed+uint64(i), cfg)
+				// Derive per-file seeds instead of using seed+i, so runs with
+				// overlapping seed ranges never repeat a file (or its
+				// seed-discriminated function names) in a shared package.
+				src := gen.Generate(rng.Derive(seed, uint64(i)), cfg)
 				var err error
 				if checkEvery > 0 && i%checkEvery == 0 {
-					err = check.Source(fmt.Sprintf("generated_%06d.go", i), src)
+					err = check.Source(filename(i), src)
 				}
 				total.Add(uint64(len(src)))
 				results <- result{i, src, err}
@@ -77,12 +80,12 @@ func main() {
 	}()
 	for item := range results {
 		if item.err != nil {
-			fatal(fmt.Sprintf("seed %d: %v", seed+uint64(item.index), item.err))
+			fatal(fmt.Sprintf("%s (root seed %d): %v", filename(item.index), seed, item.err))
 		}
 		if out == "-" {
 			_, item.err = os.Stdout.Write(item.source)
 		} else {
-			item.err = os.WriteFile(filepath.Join(out, "generated_"+pad(item.index)+".go"), item.source, 0o644)
+			item.err = os.WriteFile(filepath.Join(out, filename(item.index)), item.source, 0o644)
 		}
 		if item.err != nil {
 			fatal(item.err.Error())
@@ -92,11 +95,5 @@ func main() {
 	n := total.Load()
 	fmt.Fprintf(os.Stderr, "generated %d files, %.2f MiB in %s (%.2f MiB/s)\n", count, float64(n)/(1<<20), elapsed.Round(time.Millisecond), float64(n)/(1<<20)/elapsed.Seconds())
 }
-func pad(i int) string {
-	s := strconv.Itoa(i)
-	for len(s) < 6 {
-		s = "0" + s
-	}
-	return s
-}
-func fatal(message string) { fmt.Fprintln(os.Stderr, "slopgen:", message); os.Exit(2) }
+func filename(i int) string { return fmt.Sprintf("generated_%06d.go", i) }
+func fatal(message string)  { fmt.Fprintln(os.Stderr, "slopgen:", message); os.Exit(2) }

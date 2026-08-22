@@ -1,7 +1,7 @@
 // Package grammar selects legal productions with depth-damped weights.
 package grammar
 
-import "github.com/openai/slopgen/internal/rng"
+import "github.com/brainfucknow/slopgen/internal/rng"
 
 type Production uint8
 

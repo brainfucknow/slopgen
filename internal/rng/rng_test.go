@@ -16,3 +16,16 @@ func TestReproducibleAndSplit(t *testing.T) {
 		t.Fatal("split depends on parent counter")
 	}
 }
+
+func TestDeriveDistinctAcrossOverlappingRanges(t *testing.T) {
+	seen := make(map[uint64][2]uint64)
+	for root := uint64(0); root < 64; root++ {
+		for label := uint64(0); label < 64; label++ {
+			d := Derive(root, label)
+			if prev, ok := seen[d]; ok {
+				t.Fatalf("Derive(%d, %d) == Derive(%d, %d)", root, label, prev[0], prev[1])
+			}
+			seen[d] = [2]uint64{root, label}
+		}
+	}
+}

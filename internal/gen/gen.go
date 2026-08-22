@@ -4,12 +4,12 @@ package gen
 import (
 	"fmt"
 
-	"github.com/openai/slopgen/internal/emit"
-	"github.com/openai/slopgen/internal/env"
-	"github.com/openai/slopgen/internal/grammar"
-	"github.com/openai/slopgen/internal/names"
-	"github.com/openai/slopgen/internal/rng"
-	"github.com/openai/slopgen/internal/scalar"
+	"github.com/brainfucknow/slopgen/internal/emit"
+	"github.com/brainfucknow/slopgen/internal/env"
+	"github.com/brainfucknow/slopgen/internal/grammar"
+	"github.com/brainfucknow/slopgen/internal/names"
+	"github.com/brainfucknow/slopgen/internal/rng"
+	"github.com/brainfucknow/slopgen/internal/scalar"
 )
 
 type Config struct {
@@ -33,22 +33,24 @@ func (c Config) normalized() Config {
 	return c
 }
 
-type function struct {
-	name string
-	typ  scalar.ID
-}
 type Generator struct {
 	cfg    Config
 	seed   uint64
 	r      *rng.Stream
 	names  *names.Generator
-	funcs  []function
+	funcs  map[scalar.ID][]string
 	serial int
 }
 
 func Generate(seed uint64, cfg Config) []byte { return New(seed, cfg).File() }
 func New(seed uint64, cfg Config) *Generator {
-	return &Generator{cfg: cfg.normalized(), seed: seed, r: rng.New(seed), names: names.New()}
+	return &Generator{
+		cfg:   cfg.normalized(),
+		seed:  seed,
+		r:     rng.New(seed),
+		names: names.New(),
+		funcs: make(map[scalar.ID][]string),
+	}
 }
 
 func (g *Generator) File() []byte {
@@ -66,19 +68,17 @@ func (g *Generator) File() []byte {
 		// seed into one stream per file. Keep it in every package-level name so
 		// separately generated files can safely be compiled as one package.
 		name := fmt.Sprintf("fn%016x%s", g.seed, g.names.Name(fr, false, i))
-		fn := function{name, typ}
-		g.writeFunc(&w, fr, fn)
-		g.funcs = append(g.funcs, fn)
+		g.writeFunc(&w, fr, name, typ)
+		g.funcs[typ] = append(g.funcs[typ], name)
 	}
 	return append([]byte(nil), w.Bytes()...)
 }
 
-func (g *Generator) writeFunc(w *emit.Writer, r *rng.Stream, fn function) {
-	t := fn.typ
+func (g *Generator) writeFunc(w *emit.Writer, r *rng.Stream, name string, t scalar.ID) {
 	e := env.New()
 	e.Declare("left", t)
 	e.Declare("right", t)
-	w.Open(fmt.Sprintf("func %s(left %s, right %s) %s", fn.name, t, t, t))
+	w.Open(fmt.Sprintf("func %s(left %s, right %s) %s", name, t, t, t))
 	op := binaryOp(t, r)
 	w.Line(fmt.Sprintf("acc := left %s right", op))
 	e.Declare("acc", t)
@@ -89,7 +89,7 @@ func (g *Generator) writeFunc(w *emit.Writer, r *rng.Stream, fn function) {
 	w.Close()
 }
 
-func (g *Generator) writeStmt(w *emit.Writer, r *rng.Stream, e *env.Stack, t scalar.ID, i int) {
+func (g *Generator) writeStmt(w *emit.Writer, r *rng.Stream, e *env.Table, t scalar.ID, i int) {
 	switch r.Intn(8) {
 	case 0:
 		cond := g.expr(r, e, scalar.Bool, 0)
@@ -107,32 +107,29 @@ func (g *Generator) writeStmt(w *emit.Writer, r *rng.Stream, e *env.Stack, t sca
 		g.serial++
 		w.Line(fmt.Sprintf("var %s %s = %s", name, t, g.expr(r, e, t, 0)))
 		e.Declare(name, t)
+		// The declaration is always consumed here, so it can never trip the
+		// compiler's unused-variable check.
 		w.Line(fmt.Sprintf("acc = acc %s %s", binaryOp(t, r), name))
-		e.Lookup(t)[0].Used = true
 	}
 }
 
-func (g *Generator) expr(r *rng.Stream, e *env.Stack, t scalar.ID, depth int) string {
+func (g *Generator) expr(r *rng.Stream, e *env.Table, t scalar.ID, depth int) string {
 	bs := e.Lookup(t)
-	calls := g.calls(t)
+	calls := g.funcs[t]
 	p := grammar.ChooseExpr(r, depth, g.cfg.MaxDepth, len(bs) > 0, len(calls) > 0)
 	switch p {
 	case grammar.Binding:
-		b := bs[r.Intn(len(bs))]
-		b.Used = true
-		return b.Name
+		return bs[r.Intn(len(bs))]
 	case grammar.Call:
 		f := calls[r.Intn(len(calls))]
 		// Explicit conversions around arguments also keep gofmt from applying
 		// its special no-space rendering for parenthesized expressions after
 		// exported identifiers (the generic-instantiation ambiguity).
-		return fmt.Sprintf("%s(%s(%s), %s(%s))", f.name, t, g.leaf(r, e, t), t, g.leaf(r, e, t))
+		return fmt.Sprintf("%s(%s(%s), %s(%s))", f, t, g.leaf(r, e, t), t, g.leaf(r, e, t))
 	case grammar.Binary:
 		// Anchor arithmetic to a variable so an otherwise constant expression
 		// cannot overflow during compile-time constant folding.
-		b := bs[r.Intn(len(bs))]
-		b.Used = true
-		return fmt.Sprintf("%s %s %s", b.Name, binaryOp(t, r), g.expr(r, e, t, depth+1))
+		return fmt.Sprintf("%s %s %s", bs[r.Intn(len(bs))], binaryOp(t, r), g.expr(r, e, t, depth+1))
 	case grammar.Convert:
 		// Converting a value to its own defined scalar type preserves exact typing.
 		return fmt.Sprintf("%s(%s)", t, g.leaf(r, e, t))
@@ -141,24 +138,14 @@ func (g *Generator) expr(r *rng.Stream, e *env.Stack, t scalar.ID, depth int) st
 	}
 }
 
-func (g *Generator) leaf(r *rng.Stream, e *env.Stack, t scalar.ID) string {
+func (g *Generator) leaf(r *rng.Stream, e *env.Table, t scalar.ID) string {
 	bs := e.Lookup(t)
 	if len(bs) > 0 && r.Chance(3, 4) {
-		b := bs[r.Intn(len(bs))]
-		b.Used = true
-		return b.Name
+		return bs[r.Intn(len(bs))]
 	}
 	return t.Literal(r.Uint64(), false)
 }
-func (g *Generator) calls(t scalar.ID) []function {
-	var out []function
-	for _, f := range g.funcs {
-		if f.typ == t {
-			out = append(out, f)
-		}
-	}
-	return out
-}
+
 func binaryOp(t scalar.ID, _ *rng.Stream) string {
 	if t == scalar.Bool {
 		return "&&"

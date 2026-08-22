@@ -1,3 +1,3 @@
-module github.com/openai/slopgen
+module github.com/brainfucknow/slopgen
 
 go 1.22

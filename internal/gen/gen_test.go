@@ -10,7 +10,8 @@ import (
 	"go/types"
 	"testing"
 
-	"github.com/openai/slopgen/internal/check"
+	"github.com/brainfucknow/slopgen/internal/check"
+	"github.com/brainfucknow/slopgen/internal/rng"
 )
 
 func TestGeneratedFilesTypeCheckAndAreDeterministic(t *testing.T) {
@@ -33,18 +34,22 @@ func TestGeneratedFilesTypeCheckAndAreDeterministic(t *testing.T) {
 	}
 }
 
+// Two runs with overlapping per-file index ranges model the CLI's seed
+// derivation: with the old seed+index scheme these runs shared derived seeds
+// and redeclared identical function names.
 func TestGeneratedFilesTypeCheckAsOnePackage(t *testing.T) {
-	const fileCount = 100
 	cfg := Config{Functions: 20, Statements: 5, MaxDepth: 4}
 	fset := token.NewFileSet()
-	files := make([]*ast.File, 0, fileCount)
-	for i := uint64(0); i < fileCount; i++ {
-		name := fmt.Sprintf("generated_%06d.go", i)
-		file, err := parser.ParseFile(fset, name, Generate(42+i, cfg), 0)
-		if err != nil {
-			t.Fatalf("parse %s: %v", name, err)
+	var files []*ast.File
+	for _, root := range []uint64{42, 92} {
+		for i := uint64(0); i < 60; i++ {
+			name := fmt.Sprintf("run%d_generated_%06d.go", root, i)
+			file, err := parser.ParseFile(fset, name, Generate(rng.Derive(root, i), cfg), 0)
+			if err != nil {
+				t.Fatalf("parse %s: %v", name, err)
+			}
+			files = append(files, file)
 		}
-		files = append(files, file)
 	}
 	if _, err := new(types.Config).Check("generated", fset, files, nil); err != nil {
 		t.Fatalf("type check generated package: %v", err)

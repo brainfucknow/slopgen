@@ -1,42 +1,21 @@
-// Package env tracks lexical bindings using type-indexed scope tables.
+// Package env tracks declared bindings indexed by type.
 package env
 
-import "github.com/openai/slopgen/internal/scalar"
+import "github.com/brainfucknow/slopgen/internal/scalar"
 
-type Binding struct {
-	Name string
-	Type scalar.ID
-	Used bool
+// Table records the names declared for each type. M0 declares every binding
+// at function scope, so a flat table is sufficient; a scope stack returns
+// with block-scoped declarations in M1.
+type Table struct {
+	byType map[scalar.ID][]string
 }
-type Scope struct {
-	byType  map[scalar.ID][]*Binding
-	names   map[string]bool
-	ordered []*Binding
-}
-type Stack struct{ scopes []*Scope }
 
-func New() *Stack { e := &Stack{}; e.Push(); return e }
-func (e *Stack) Push() {
-	e.scopes = append(e.scopes, &Scope{byType: make(map[scalar.ID][]*Binding), names: make(map[string]bool)})
+func New() *Table { return &Table{byType: make(map[scalar.ID][]string)} }
+
+func (e *Table) Declare(name string, typ scalar.ID) {
+	e.byType[typ] = append(e.byType[typ], name)
 }
-func (e *Stack) Pop() []*Binding {
-	s := e.scopes[len(e.scopes)-1]
-	e.scopes = e.scopes[:len(e.scopes)-1]
-	return s.ordered
-}
-func (e *Stack) Declare(name string, typ scalar.ID) *Binding {
-	s := e.scopes[len(e.scopes)-1]
-	b := &Binding{Name: name, Type: typ}
-	s.names[name] = true
-	s.byType[typ] = append(s.byType[typ], b)
-	s.ordered = append(s.ordered, b)
-	return b
-}
-func (e *Stack) ContainsCurrent(name string) bool { return e.scopes[len(e.scopes)-1].names[name] }
-func (e *Stack) Lookup(typ scalar.ID) []*Binding {
-	var out []*Binding
-	for i := len(e.scopes) - 1; i >= 0; i-- {
-		out = append(out, e.scopes[i].byType[typ]...)
-	}
-	return out
-}
+
+// Lookup returns the names bound with type typ. The returned slice aliases
+// internal state and must not be mutated.
+func (e *Table) Lookup(typ scalar.ID) []string { return e.byType[typ] }
