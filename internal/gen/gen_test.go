@@ -2,7 +2,12 @@ package gen
 
 import (
 	"bytes"
+	"fmt"
+	"go/ast"
 	"go/format"
+	"go/parser"
+	"go/token"
+	"go/types"
 	"testing"
 
 	"github.com/openai/slopgen/internal/check"
@@ -25,6 +30,24 @@ func TestGeneratedFilesTypeCheckAndAreDeterministic(t *testing.T) {
 		if !bytes.Equal(a, formatted) {
 			t.Fatalf("seed %d is not gofmt canonical", seed)
 		}
+	}
+}
+
+func TestGeneratedFilesTypeCheckAsOnePackage(t *testing.T) {
+	const fileCount = 100
+	cfg := Config{Functions: 20, Statements: 5, MaxDepth: 4}
+	fset := token.NewFileSet()
+	files := make([]*ast.File, 0, fileCount)
+	for i := uint64(0); i < fileCount; i++ {
+		name := fmt.Sprintf("generated_%06d.go", i)
+		file, err := parser.ParseFile(fset, name, Generate(42+i, cfg), 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		files = append(files, file)
+	}
+	if _, err := new(types.Config).Check("generated", fset, files, nil); err != nil {
+		t.Fatalf("type check generated package: %v", err)
 	}
 }
 

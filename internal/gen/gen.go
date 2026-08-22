@@ -39,6 +39,7 @@ type function struct {
 }
 type Generator struct {
 	cfg    Config
+	seed   uint64
 	r      *rng.Stream
 	names  *names.Generator
 	funcs  []function
@@ -47,7 +48,7 @@ type Generator struct {
 
 func Generate(seed uint64, cfg Config) []byte { return New(seed, cfg).File() }
 func New(seed uint64, cfg Config) *Generator {
-	return &Generator{cfg: cfg.normalized(), r: rng.New(seed), names: names.New()}
+	return &Generator{cfg: cfg.normalized(), seed: seed, r: rng.New(seed), names: names.New()}
 }
 
 func (g *Generator) File() []byte {
@@ -61,7 +62,10 @@ func (g *Generator) File() []byte {
 		}
 		fr := g.r.Split(uint64(i))
 		typ := scalar.All()[fr.Intn(len(scalar.All()))]
-		name := "fn" + g.names.Name(fr, false, i)
+		// The seed is the file discriminator used by callers that split a root
+		// seed into one stream per file. Keep it in every package-level name so
+		// separately generated files can safely be compiled as one package.
+		name := fmt.Sprintf("fn%016x%s", g.seed, g.names.Name(fr, false, i))
 		fn := function{name, typ}
 		g.writeFunc(&w, fr, fn)
 		g.funcs = append(g.funcs, fn)
